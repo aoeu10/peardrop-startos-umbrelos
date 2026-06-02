@@ -6,14 +6,20 @@ COPY peardrop-src/ ./
 
 RUN npm install --omit=dev && \
     npm cache clean --force && \
-    ln -s /opt/peardrop/bin/peardrop /usr/local/bin/peardrop && \
-    cd /opt/peardrop/node_modules/rocksdb-native/prebuilds/linux-x64 && \
-    [ -f rocksdb-native.node ] && [ ! -f rocksdb-native@3.15.1.node ] && \
-      ln -s rocksdb-native.node rocksdb-native@3.15.1.node || true && \
+    ln -s /opt/peardrop/bin/peardrop /usr/local/bin/peardrop
+
+# Create version-suffixed symlinks for require-addon compatibility
+RUN cd /opt/peardrop/node_modules/rocksdb-native/prebuilds/linux-x64 && \
+    [ -f rocksdb-native.node ] && \
+    cp rocksdb-native.node rocksdb-native@3.15.1.node; \
     cd /opt/peardrop/node_modules/sodium-native/prebuilds/linux-x64 && \
-    [ -f sodium-native.node ] && [ ! -f sodium-native@3.15.1.node ] && \
-      version=$(cat /opt/peardrop/node_modules/sodium-native/package.json | grep '"version"' | head -1 | sed 's/.*: "//;s/".*//') && \
-      ln -s sodium-native.node "sodium-native@${version}.node" || true
+    [ -f sodium-native.node ] && \
+    cp sodium-native.node sodium-native@4.2.1.node; \
+    cd /opt/peardrop/node_modules/udx-native/prebuilds/linux-x64 && \
+    [ -f udx-native.node ] && \
+    ver=$(node -e "console.log(require('/opt/peardrop/node_modules/udx-native/package.json').version)") && \
+    cp udx-native.node "udx-native@${ver}.node"; \
+    true
 
 ENV HOME=/data
 
