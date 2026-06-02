@@ -1,0 +1,140 @@
+/**
+ * MODULE: lib/file-utils.js
+ * PURPOSE: Pure file system utilities - no P2P knowledge
+ * 
+ * EXPORTS:
+ *   - getUniqueFilePath(filePath) - Append (1), (2) etc. if file exists
+ *   - ensureDir(dirPath) - Create directory recursively
+ *   - formatBytes(bytes) - Human readable size
+ *   - formatSpeed(bytesPerSec) - Human readable speed
+ * 
+ * EXTERNAL CALLS: fs.promises, path
+ * KEY STATE: None (stateless utilities)
+ */
+
+const fs = require('fs').promises;
+const path = require('path');
+
+/**
+ * Get a unique file path by appending (1), (2), etc. if file exists
+ * Similar to macOS behavior: file.txt → file (1).txt → file (2).txt
+ * 
+ * @param {string} filePath - Original file path
+ * @returns {Promise<string>} - Unique file path
+ */
+async function getUniqueFilePath(filePath) {
+    // Check if file exists
+    try {
+        await fs.access(filePath);
+    } catch {
+        // File doesn't exist, use original path
+        return filePath;
+    }
+    
+    // File exists, generate unique name
+    const dir = path.dirname(filePath);
+    const ext = path.extname(filePath);
+    const baseName = path.basename(filePath, ext);
+    
+    let counter = 1;
+    let newPath;
+    
+    while (true) {
+        newPath = path.join(dir, `${baseName} (${counter})${ext}`);
+        try {
+            await fs.access(newPath);
+            counter++;
+        } catch {
+            // This path doesn't exist, use it
+            return newPath;
+        }
+        
+        // Safety limit
+        if (counter > 1000) {
+            throw new Error('Too many duplicate files');
+        }
+    }
+}
+
+/**
+ * Ensure a directory exists, creating it recursively if needed
+ * 
+ * @param {string} dirPath - Directory path
+ */
+async function ensureDir(dirPath) {
+    await fs.mkdir(dirPath, { recursive: true });
+}
+
+/**
+ * Get a unique folder path by appending (1), (2), etc. if folder exists
+ * Similar to macOS behavior: folder → folder (1) → folder (2)
+ * Works cross-platform (macOS, Windows, Linux)
+ * 
+ * @param {string} folderPath - Original folder path
+ * @returns {Promise<string>} - Unique folder path
+ */
+async function getUniqueFolderPath(folderPath) {
+    // Check if folder exists
+    try {
+        await fs.access(folderPath);
+    } catch {
+        // Folder doesn't exist, use original path
+        return folderPath;
+    }
+    
+    // Folder exists, generate unique name
+    const parentDir = path.dirname(folderPath);
+    const folderName = path.basename(folderPath);
+    
+    let counter = 1;
+    let newPath;
+    
+    while (true) {
+        newPath = path.join(parentDir, `${folderName} (${counter})`);
+        try {
+            await fs.access(newPath);
+            counter++;
+        } catch {
+            // This path doesn't exist, use it
+            return newPath;
+        }
+        
+        // Safety limit
+        if (counter > 1000) {
+            throw new Error('Too many duplicate folders');
+        }
+    }
+}
+
+/**
+ * Format bytes as human readable string
+ * 
+ * @param {number} bytes 
+ * @returns {string} - e.g., "1.5 MB"
+ */
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+/**
+ * Format speed as human readable string
+ * 
+ * @param {number} bytesPerSec 
+ * @returns {string} - e.g., "1.5 MB/s"
+ */
+function formatSpeed(bytesPerSec) {
+    if (!bytesPerSec || bytesPerSec === 0) return '0 B/s';
+    return formatBytes(bytesPerSec) + '/s';
+}
+
+module.exports = {
+    getUniqueFilePath,
+    getUniqueFolderPath,
+    ensureDir,
+    formatBytes,
+    formatSpeed
+};

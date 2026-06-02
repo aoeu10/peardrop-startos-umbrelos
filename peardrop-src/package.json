@@ -1,0 +1,25 @@
+{
+  "name": "peardrop",
+  "version": "0.18.0",
+  "description": "Simple, elegant P2P file sharing using pearcore",
+  "main": "main.js",
+  "type": "commonjs",
+  "bin": {
+    "peardrop": "./bin/peardrop"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "dependencies": {
+    "bs58": "^6.0.0",
+    "corestore": "^7.5.0",
+    "hyperdrive": "^13.3.0",
+    "hyperswarm": "^4.16.0",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "electron": "^28.3.3"
+  }
+}
