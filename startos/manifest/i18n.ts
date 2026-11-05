@@ -13,8 +13,7 @@ export const long = {
     'PearDrop es una aplicación simple y elegante para compartir archivos P2P. Comparte archivos y obtén un enlace peardrop://.',
   de_DE:
     'PearDrop ist eine einfache, elegante P2P-Dateiaustausch-Anwendung. Teile Dateien und erhalte einen peardrop://-Link.',
-  pl_PL:
-    'PearDrop to prosta, elegancka aplikacja do udostępniania plików P2P.',
+  pl_PL: 'PearDrop to prosta, elegancka aplikacja do udostępniania plików P2P.',
   fr_FR:
     'PearDrop est une application simple et élégante de partage de fichiers P2P.',
 }

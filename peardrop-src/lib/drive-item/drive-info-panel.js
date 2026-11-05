@@ -1,13 +1,10 @@
 /**
  * DriveInfoPanel - macOS-style info panel for drive details
- * 
  * @module DriveInfoPanel
  * @version 1.0.0
- * 
  * EXPORTS:
- *   - DriveInfoPanel (class) - Modal info panel
- *   - showDriveInfo(data) - Quick function to show panel
- * 
+ * DriveInfoPanel (class) - Modal info panel
+ * showDriveInfo(data) - Quick function to show panel
  * USAGE:
  *   const panel = new DriveInfoPanel();
  *   panel.show({
@@ -38,14 +35,10 @@
   'use strict';
 
   // ==================== UTILITIES ====================
+  // Shared formatting comes from lib/ui-utils.js (window.PearUtils, loaded
+  // first). formatDate/truncateKey below are panel-specific and stay local.
 
-  function formatBytes(bytes) {
-    if (bytes == null || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  }
+  const formatBytes = (bytes) => PearUtils.formatBytes(bytes);
 
   function formatDate(dateStr) {
     if (!dateStr) return 'Unknown';
@@ -66,32 +59,8 @@
     return key.slice(0, len) + '...' + key.slice(-len);
   }
 
-  function escapeHtml(text) {
-    if (text == null) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-  }
-
-  function getFileIcon(filename) {
-    if (!filename) return '📄';
-    const ext = filename.split('.').pop()?.toLowerCase();
-    const icons = {
-      // Images
-      jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️',
-      // Video
-      mp4: '🎬', mov: '🎬', avi: '🎬', mkv: '🎬', webm: '🎬',
-      // Audio
-      mp3: '🎵', wav: '🎵', ogg: '🎵', flac: '🎵', m4a: '🎵',
-      // Documents
-      pdf: '📕', doc: '📘', docx: '📘', txt: '📄', md: '📝',
-      // Archives
-      zip: '📦', rar: '📦', '7z': '📦', tar: '📦', gz: '📦',
-      // Code
-      js: '⚙️', ts: '⚙️', py: '🐍', html: '🌐', css: '🎨', json: '📋'
-    };
-    return icons[ext] || '📄';
-  }
+  const escapeHtml = (text) => PearUtils.escapeHtml(text);
+  const getFileIcon = (filename) => PearUtils.getFileIcon(filename);
 
   // ==================== STYLES ====================
 

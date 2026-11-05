@@ -55,7 +55,7 @@ export default {
   fr_FR: {
     0: 'Démarrage de PearDrop P2P',
     1: 'Service P2P',
-    2: 'PearDrop est en cours d\'exécution',
+    2: "PearDrop est en cours d'exécution",
     3: 'PearDrop ne répond pas',
     4: 'Partager des Fichiers',
     5: 'Partager des fichiers via P2P',

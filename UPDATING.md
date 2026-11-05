@@ -1,17 +1,50 @@
-# Updating the upstream version
+# Updating the upstream PearDrop version
 
-This package wraps Start9 Labs' own [hello-world](https://github.com/Start9Labs/hello-world) source, which we build and publish ourselves as `ghcr.io/start9labs/hello-world`. "Upstream" here means that source repo, not the image namespace.
+PearDrop is bundled from the dedicated desktop repository:
 
-## Determining the upstream version
+```text
+https://github.com/peardrive/peardrop-desktop
+```
 
-- **hello-world** ([Start9Labs/hello-world](https://github.com/Start9Labs/hello-world)) — fetch the latest release tag:
+## Determine the upstream version
 
-  ```sh
-  gh release view -R Start9Labs/hello-world --json tagName -q .tagName
-  ```
+```bash
+git clone --depth 1 https://github.com/peardrive/peardrop-desktop.git upstream-desktop-fresh
+node -p "require('./upstream-desktop-fresh/package.json').version"
+git -C upstream-desktop-fresh rev-parse HEAD
+```
 
-  The current pin lives in `startos/manifest/index.ts` at `images['hello-world'].source.dockerTag` (the version after the `:` in `ghcr.io/start9labs/hello-world:<version>`).
+Record both the package version and exact commit in `README.md` and the release notes in `startos/versions/current.ts`.
 
-## Applying the bump
+## Apply the update
 
-- Bump `dockerTag` in `startos/manifest/index.ts` to `ghcr.io/start9labs/hello-world:<new version>` (drop the leading `v` from the release tag).
+The web port lives in `upstream-desktop/web-host/` and must be kept compatible with upstream's IPC surface:
+
+1. Refresh the upstream clone: `upstream-desktop/` (or clone the new tag into it).
+   Keep `upstream-desktop/web-host/` — it is ours, everything else under
+   `upstream-desktop/` is upstream code and should match the new tag exactly
+   except the one-line shim `<script>` in `src/renderer/index.html`.
+2. Check `src/shared/ipc.ts` for changed/added channels. Update
+   `web-host/server.ts` (invoke handlers + push wiring) and
+   `web-host/preload.ts` (browser API) to cover the full surface.
+3. Check `src/main/peardrop-app.ts` for boot-order or settings→engine-reload
+   changes and mirror them in the web host.
+4. Rebuild on the host (arch-independent JS only):
+   ```bash
+   cd upstream-desktop/web-host && ./build.sh
+   ```
+5. Smoke test: `PEARDROP_HOME=/tmp/peardrop-test node web-host/dist/server.cjs`,
+   then load `http://127.0.0.1:47931/` in a browser, share a file, and check
+   `GET /api/status`.
+6. Update:
+   - `startos/versions/current.ts` (bump the package version)
+   - `README.md` (versions table, Quick Reference)
+   - `instructions.md` when user-facing behavior changes
+7. Build and verify the package: `make check-deps && npx prettier --config node_modules/@start9labs/start-sdk/prettier.config.json --write startos && make x86`.
+   Inspect the built manifest, then test the s9pk on a real x86_64 StartOS box.
+
+The Docker image intentionally contains no JS bundling: it installs runtime
+dependencies for the target arch and copies the host-built `web-host/dist/`.
+Never build the renderer inside the x86_64 image — QEMU makes it slow.
+
+The StartOS package version uses `MAJOR.MINOR.PATCH:BUILD` and is intentionally independent from the upstream desktop version.

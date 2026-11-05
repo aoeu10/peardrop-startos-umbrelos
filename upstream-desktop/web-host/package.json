@@ -1,0 +1,19 @@
+{
+  "name": "peardrop-web-host",
+  "version": "0.29.0",
+  "private": true,
+  "description": "Headless web host for PearDrop: Node HTTP+WS server running the real P2P engine, serving the renderer to a browser. Built by build.sh, which uses the root repo's node_modules (vite, esbuild, ws, react) — installing this folder separately is NOT required.",
+  "main": "dist/server.cjs",
+  "scripts": {
+    "build": "bash build.sh",
+    "start": "node dist/server.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

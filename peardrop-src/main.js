@@ -1,63 +1,56 @@
 /**
  * MODULE: main.js (PearDrop v2)
  * PURPOSE: Electron main process for PearDrop - P2P file sharing
- * VERSION: 0.18.0
- * 
+ * VERSION: 0.24.0
  * EXPORTS: None (entry point)
- * 
  * FUNCTIONS:
- *   - createWindow() - Creates main BrowserWindow with platform-aware styling
- *   - initializeApp() - Ensures app directories exist, loads config
- *   - setupIPC() - Registers all IPC handlers for renderer
- * 
+ * createWindow() - Creates main BrowserWindow with platform-aware styling
+ * initializeApp() - Ensures app directories exist, loads config
+ * setupIPC() - Registers all IPC handlers for renderer
  * IPC HANDLERS (renderer can invoke):
  *   Hyperdrive:
- *     - 'hyperdrive-share' - Create share from files, returns link
- *     - 'hyperdrive-stop' - Stop sharing a drive
- *     - 'hyperdrive-open' - Connect to remote drive (includes dedup check)
- *     - 'hyperdrive-abort' - Abort pending connection(s)
- *     - 'hyperdrive-download' - Download files from opened drive
- *     - 'hyperdrive-status' - Get active/stopped drives stats
- *   DriveManager:
- *     - 'drives-list' - Get all tracked drives
- *     - 'drives-pause' - Pause seeding (keep data)
- *     - 'drives-resume' - Resume seeding
- *     - 'drives-remove' - Delete drive completely
- *     - 'drives-check-files' - Verify local file availability
- *     - 'drive-get' - Get single drive by ID
+ * 'hyperdrive-share' - Create share from files, returns link
+ * 'hyperdrive-check-duplicate' - Fast local duplicate check
+ * 'hyperdrive-open' - Connect to remote drive (includes dedup check)
+ * 'hyperdrive-download' - Download files from opened drive
+ *   HyperdriveManager (UI Interface):
+ * 'drive-get' - Get single drive by ID
+ * 'drives-list' - Get all tracked drives
+ * 'drives-pause' - Pause seeding (keep data)
+ * 'drives-resume' - Resume seeding
+ * 'drives-remove' - Delete drive completely
  *   Utilities:
- *     - 'open-downloads' - Open downloads folder in Finder/Explorer
- *     - 'open-file' - Open file in default application
- *     - 'show-file-in-folder' - Reveal file in Finder/Explorer
- *     - 'get-files-stats' - Get file/folder stats with folder expansion
- *     - 'get-debug' - Get current debug state
- *     - 'set-debug' - Set debug state (persists to config)
- * 
+ * 'open-downloads' - Open downloads folder in Finder/Explorer
+ * 'open-file' - Open file in default application
+ * 'show-file-in-folder' - Reveal file in Finder/Explorer
+ * 'get-files-stats' - Get file/folder stats with folder expansion
+ * 'generate-qr' - Generate QR data URL for a string
+ * 'get-app-version' - App version (reset-notice gating)
+ * 'check-legacy-data-present' - Detect pre-unified state files
+ * 'get-file-thumbnail' - Image src or OS-native icon for a file
+ * 'get-debug' - Get current debug state
+ * 'set-debug' - Set debug state (persists to config)
  * IPC EVENTS SENT (to renderer):
- *   - 'peer-connected' - Peer joined (upload) or download starting
- *   - 'peer-disconnected' - Peer left
- *   - 'upload-progress' - Transfer progress update
- *   - 'upload-complete' - Transfer finished
- *   - 'files-downloaded' - Download complete with file list
- *   - 'drives-updated' - Drive added/removed/changed
- *   - 'download-peer-disconnected' - Sender went offline during download
- * 
+ * 'peer-connected' - Peer joined (upload) or download starting
+ * 'peer-disconnected' - Peer left
+ * 'upload-progress' - Transfer progress update
+ * 'upload-complete' - Transfer finished
+ * 'files-downloaded' - Download complete with file list
+ * 'drives-updated' - Drive added/removed/changed
+ * 'download-peer-disconnected' - Sender went offline during download
  * EXTERNAL CALLS:
- *   - lib/hyperdrive-manager.js (manager singleton) - 🔒 SACRED
- *   - lib/drive-manager.js (driveManager singleton) - Single source of truth
- *   - lib/downloader.js (downloadFromDrive)
- *   - lib/file-utils.js (formatBytes, formatSpeed)
- *   - lib/logger.js (createLogger, loadConfig, setDebug)
- * 
+ * lib/hyperdrive-manager.js (manager singleton) - Single source of truth for drives
+ * lib/downloader.js (downloadFromDrive)
+ * lib/file-utils.js (formatBytes, formatSpeed)
+ * lib/logger.js (createLogger, loadConfig, setDebug)
  * KEY STATE:
- *   - mainWindow - BrowserWindow instance
- *   - APP_DATA_DIR - ~/peardrop
- *   - DOWNLOADS_DIR - ~/peardrop/downloads
- * 
+ * mainWindow - BrowserWindow instance
+ * APP_DATA_DIR - ~/peardrop
+ * DOWNLOADS_DIR - ~/peardrop/downloads
  * PLATFORM SUPPORT:
- *   - macOS: Full glassmorphism, traffic lights, vibrancy
- *   - Windows: Standard title bar, solid background
- *   - Linux: Standard title bar, solid background
+ * macOS: Full glassmorphism, traffic lights, vibrancy
+ * Windows: Standard title bar, solid background
+ * Linux: Standard title bar, solid background
  */
 
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
@@ -66,14 +59,13 @@ const { join } = path;
 const fs = require('fs').promises;
 const os = require('os');
 
-// Hyperdrive manager for file sharing (🔒 SACRED - don't modify)
-const { manager: hyperdriveManager } = require('./lib/hyperdrive-manager');
+// Hyperdrive manager for file sharing (🔒 SACRED core + UI interface)
+const { manager: hyperdriveManager, DriveState } = require('./lib/hyperdrive-manager');
 // Download orchestration (✅ SAFE to modify)
 const { downloadFromDrive } = require('./lib/downloader');
-// Drive manager - single source of truth for all drives (✅ SAFE to modify)
-const { manager: driveManager, DriveState } = require('./lib/drive-manager');
 // Utilities
-const { formatBytes, formatSpeed } = require('./lib/file-utils');
+const { formatBytes, formatSpeed, normalizeUserPath } = require('./lib/file-utils');
+const { EngineError } = require('./lib/engine-errors');
 // Debug logging
 const { createLogger, loadConfig: loadDebugConfig, setDebug, isDebugEnabled } = require('./lib/logger');
 const log = createLogger('PearDrop');
@@ -84,6 +76,22 @@ const isWin = process.platform === 'win32';
 const isLinux = process.platform === 'linux';
 
 let mainWindow;
+
+// SINGLE INSTANCE LOCK (added 2026-07-03): two instances fight over the same
+// corestore fd locks ("File descriptor could not be locked"), which used to
+// make drives fail to resume. Second instance exits immediately and focuses
+// the first.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+    console.log('[PearDrop] Another instance is already running - exiting');
+    app.exit(0);
+}
+app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+});
 
 // App configuration
 const APP_DATA_DIR = join(os.homedir(), 'peardrop');
@@ -125,7 +133,7 @@ function createWindow() {
     } else {
         // Windows/Linux: standard title bar, solid background
         Object.assign(windowOptions, {
-            backgroundColor: '#1a1a2e',
+            backgroundColor: '#000000',
             // Frame is default true on Windows/Linux
             autoHideMenuBar: true  // Hide menu bar but allow Alt to show it
         });
@@ -185,30 +193,42 @@ function setupIPC() {
     // Create a shareable link for files
     ipcMain.handle('hyperdrive-share', async (event, { files, options = {} }) => {
         try {
-            const result = await hyperdriveManager.createDrive(files, {
+            // Sanitize incoming paths at the boundary. Renderer-provided paths
+            // may carry file:// prefixes or drag-and-drop artifacts; normalize
+            // once here so downstream code can assume clean absolute paths.
+            const safeFiles = (files || []).map(f => {
+                if (!f || typeof f.path !== 'string') return f;
+                try {
+                    return { ...f, path: normalizeUserPath(f.path) };
+                } catch (err) {
+                    throw new Error(`Invalid path for "${f.name || f.path}": ${err.message}`);
+                }
+            });
+
+            const result = await hyperdriveManager.createDrive(safeFiles, {
                 ttlMs: options.ttlMs || 0,
                 name: options.name
             });
             
             console.log('[PearDrop] Share created:', result.shareLink);
-            
+
             // Calculate total bytes from files
-            const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
-            const shareName = options.name || (files.length === 1 ? files[0].name : `${files.length} files`);
-            
-            // Add to DriveManager (single source of truth for Shares tab)
-            const driveEntry = await driveManager.add({
+            const totalBytes = safeFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+            const shareName = options.name || (safeFiles.length === 1 ? safeFiles[0].name : `${safeFiles.length} files`);
+
+            // Add to drives state (single source of truth for UI)
+            const driveEntry = await hyperdriveManager.addDriveEntry({
                 id: result.driveId,
                 key: result.key,
                 shareLink: result.shareLink,
                 name: shareName,
-                files: files.map(f => ({
+                files: safeFiles.map(f => ({
                     name: f.name,
                     path: f.path,
                     size: f.size
                 })),
                 totalBytes: totalBytes,
-                localPath: files[0]?.path ? path.dirname(files[0].path) : null,
+                localPath: safeFiles[0]?.path ? path.dirname(safeFiles[0].path) : null,
                 storagePath: path.join(hyperdriveManager.drivesDir, result.driveId),
                 state: DriveState.ACTIVE,
                 isUpload: true
@@ -234,24 +254,13 @@ function setupIPC() {
         }
     });
 
-    // Stop sharing a drive
-    ipcMain.handle('hyperdrive-stop', async (event, { driveId, purge = true }) => {
-        try {
-            await hyperdriveManager.stopDrive(driveId, { purge });
-            console.log('[PearDrop] Share stopped:', driveId);
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
-    });
-
     // Quick local-only duplicate check (fast, no network)
     ipcMain.handle('hyperdrive-check-duplicate', async (event, { shareLink }) => {
         const driveKey = shareLink.replace('peardrop://', '').toLowerCase();
-        const existingDrive = driveManager.getByKey(driveKey);
+        const existingDrive = hyperdriveManager.getDriveEntryByKey(driveKey);
         
         if (existingDrive) {
-            const localAvailable = await driveManager.checkLocalAvailability(existingDrive.id);
+            const localAvailable = await hyperdriveManager.checkLocalAvailability(existingDrive.id);
             return {
                 isDuplicate: true,
                 localStatus: localAvailable ? 'available' : 'missing',
@@ -274,11 +283,11 @@ function setupIPC() {
             // Extract key from peardrop:// link
             const driveKey = shareLink.replace('peardrop://', '').toLowerCase();
             if (driveKey && !forceOpen) {
-                const existingDrive = driveManager.getByKey(driveKey);
+                const existingDrive = hyperdriveManager.getDriveEntryByKey(driveKey);
                 
                 if (existingDrive) {
                     // Check if local files still exist
-                    const localAvailable = await driveManager.checkLocalAvailability(existingDrive.id);
+                    const localAvailable = await hyperdriveManager.checkLocalAvailability(existingDrive.id);
                     
                     console.log('[PearDrop] Duplicate detected:', {
                         driveKey: driveKey.slice(0, 12) + '...',
@@ -310,50 +319,52 @@ function setupIPC() {
                 shareName: result.shareName,
                 totalBytes: result.totalBytes,
                 hasManifest: result.hasManifest,
-                peerConnected: result.peerConnected
+                peerConnected: result.peerConnected,
+                truncated: result.truncated
             };
         } catch (error) {
             console.error('[PearDrop] Open failed:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    // Abort a pending connection
-    ipcMain.handle('hyperdrive-abort', async (event, { driveId }) => {
-        try {
-            if (driveId) {
-                const aborted = hyperdriveManager.abortConnection(driveId);
-                console.log('[PearDrop] Abort connection:', { driveId, aborted });
-                return { success: true, aborted };
-            } else {
-                hyperdriveManager.abortAllConnections();
-                console.log('[PearDrop] Aborted all pending connections');
-                return { success: true, aborted: true };
-            }
-        } catch (error) {
-            console.error('[PearDrop] Abort failed:', error);
-            return { success: false, error: error.message };
+            // Receive-path handler: attach structured errorDetail alongside the
+            // legacy string `error` so renderers keep working while future code
+            // can branch on errorDetail.category. Non-EngineError caught here
+            // (e.g. programmer bugs) get no errorDetail rather than a fake one.
+            return {
+                success: false,
+                error: error.message,
+                ...(error instanceof EngineError ? { errorDetail: error.toJSON() } : {}),
+            };
         }
     });
 
     // Download files from an opened drive
     // Uses lib/downloader.js (✅ SAFE module - can be modified without touching sacred code)
-    ipcMain.handle('hyperdrive-download', async (event, { driveId, destDir }) => {
+    ipcMain.handle('hyperdrive-download', async (event, { driveId, destDir, fileNames }) => {
         try {
             const session = hyperdriveManager.activeDrives.get(driveId);
             if (!session) {
-                throw new Error('Session not found');
+                throw new EngineError({
+                    category: 'receive.no-session',
+                    cause: 'session-not-found',
+                    message: 'Session not found',
+                });
             }
-            
+
             const downloadPath = destDir || DOWNLOADS_DIR;
-            
+
             console.log('[PearDrop] Download starting via downloader module');
-            
-            // Use the downloader module with callbacks for UI updates
+
+            // `fileNames` pass-through for per-file selection.
+            // Dormant today — no renderer callsite passes it (verified by
+            // grep). When 4E-ui lands and the caller starts sending a subset,
+            // the caller should also compute a subset-scoped `totalBytes` so
+            // downloader.js's byte-percent tracks the selection instead of the
+            // whole-drive total. Passing `session.totalBytes` unchanged today
+            // is correct because `fileNames` is absent.
             const result = await downloadFromDrive(session.drive, {
                 destDir: downloadPath,
                 totalBytes: session.totalBytes || 0,
                 shareName: session.shareName,
+                fileNames,
                 
                 onPeerConnected: (data) => {
                     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -392,8 +403,8 @@ function setupIPC() {
                 }
             });
             
-            // Add to DriveManager (single source of truth)
-            const driveEntry = await driveManager.add({
+            // Add to drives state (single source of truth)
+            const driveEntry = await hyperdriveManager.addDriveEntry({
                 id: driveId,
                 key: session.metadata?.key,
                 shareLink: session.shareLink || `peardrop://${session.metadata?.key || 'unknown'}`,
@@ -433,16 +444,15 @@ function setupIPC() {
             return { success: true, files: result.files, downloadPath, driveId: driveEntry.id };
         } catch (error) {
             console.error('[PearDrop] Download failed:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    // Get status of all drives
-    ipcMain.handle('hyperdrive-status', async () => {
-        try {
-            return { success: true, ...hyperdriveManager.getStatus() };
-        } catch (error) {
-            return { success: false, error: error.message };
+            // Receive-path handler: attach structured errorDetail when the
+            // error is typed. See hyperdrive-open handler above for the
+            // rationale (renderer keeps its string `error` field; new code
+            // can branch on errorDetail.category).
+            return {
+                success: false,
+                error: error.message,
+                ...(error instanceof EngineError ? { errorDetail: error.toJSON() } : {}),
+            };
         }
     });
 
@@ -486,10 +496,14 @@ function setupIPC() {
         }
     });
 
-    // Get drive info by ID
+    // ========================================================================
+    // Drive list — backed by HyperdriveManager + drives-state.json
+    // ========================================================================
+
+    // Get single drive by ID (used by drive-actions.js for open/show-in-folder)
     ipcMain.handle('drive-get', async (event, { id }) => {
         try {
-            const drive = driveManager.get(id);
+            const drive = hyperdriveManager.getDriveEntry(id);
             if (!drive) {
                 return { success: false, error: 'Drive not found' };
             }
@@ -499,14 +513,10 @@ function setupIPC() {
         }
     });
 
-    // ========================================================================
-    // DriveManager - Single source of truth for all drives
-    // ========================================================================
-
     // Get all drives
     ipcMain.handle('drives-list', async () => {
         try {
-            const drives = driveManager.getAll();
+            const drives = hyperdriveManager.getAllDriveEntries();
             return { success: true, drives };
         } catch (error) {
             return { success: false, error: error.message };
@@ -514,19 +524,26 @@ function setupIPC() {
     });
 
     // Pause seeding (keep drive, stop network)
-    ipcMain.handle('drives-pause', async (event, { id }) => {
+    ipcMain.handle('drives-pause', async (event, { id } = {}) => {
         try {
+            if (!id) {
+                console.warn('[PearDrop] drives-pause called without id');
+                return { success: false, error: 'Missing drive id' };
+            }
             console.log('[PearDrop] Pausing drive', { id });
-            
+
             // Stop the hyperdrive but keep storage
             const session = hyperdriveManager.activeDrives.get(id);
             if (session) {
-                await hyperdriveManager.stopDrive(id, { purge: false });
+                await hyperdriveManager.stopDrive(id, { delete: false });
             }
-            
-            // Update DriveManager state
-            const entry = await driveManager.pause(id);
-            
+
+            // Update drive state
+            const entry = await hyperdriveManager.pauseDriveEntry(id);
+            if (!entry) {
+                // Previously returned success:true with a null entry — a silent no-op
+                return { success: false, error: 'Drive not found' };
+            }
             return { success: true, entry };
         } catch (error) {
             console.error('[PearDrop] Failed to pause drive:', error);
@@ -534,15 +551,19 @@ function setupIPC() {
         }
     });
 
-    // Resume seeding
-    ipcMain.handle('drives-resume', async (event, { id }) => {
+    // Resume seeding — actually re-opens the drive and rejoins the swarm
+    // (was a state-flip-only stub with a TODO until 2026-07-03)
+    ipcMain.handle('drives-resume', async (event, { id } = {}) => {
         try {
+            if (!id) {
+                console.warn('[PearDrop] drives-resume called without id');
+                return { success: false, error: 'Missing drive id' };
+            }
             console.log('[PearDrop] Resuming drive', { id });
-            
-            // TODO: Implement re-joining swarm for paused drives
-            // For now, just update state
-            const entry = await driveManager.resume(id);
-            
+            const entry = await hyperdriveManager.resumeDrive(id);
+            if (!entry) {
+                return { success: false, error: 'Drive not found' };
+            }
             return { success: true, entry };
         } catch (error) {
             console.error('[PearDrop] Failed to resume drive:', error);
@@ -559,17 +580,24 @@ function setupIPC() {
             const session = hyperdriveManager.activeDrives.get(id);
             if (session) {
                 console.log('[PearDrop] Stopping active drive', { id });
-                await hyperdriveManager.stopDrive(id, { purge: true });
+                await hyperdriveManager.stopDrive(id, { delete: true });
             }
             
-            // Remove via DriveManager (handles storage + optional file deletion)
-            const success = await driveManager.remove(id, { 
+            // Remove via drive state (handles storage + optional file deletion)
+            const success = await hyperdriveManager.removeDriveEntry(id, { 
                 deleteFiles, 
                 deleteStorage: true 
             });
             
-            // Notify renderer
-            if (success && mainWindow && !mainWindow.isDestroyed()) {
+            console.log('[DEBUG] removeDriveEntry result:', {
+                id,
+                success,
+                mainWindowExists: !!mainWindow,
+                mainWindowDestroyed: mainWindow?.isDestroyed()
+            });
+            
+            // Notify renderer (send event even if entry was already removed from manifest)
+            if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('drives-updated', {
                     action: 'removed',
                     id
@@ -580,26 +608,6 @@ function setupIPC() {
             return { success };
         } catch (error) {
             console.error('[PearDrop] Failed to remove drive:', error);
-            return { success: false, error: error.message };
-        }
-    });
-
-    // Check local file availability for all drives
-    ipcMain.handle('drives-check-files', async () => {
-        try {
-            const drives = driveManager.getAll();
-            const results = [];
-            
-            for (const drive of drives) {
-                const available = await driveManager.checkLocalAvailability(drive.id);
-                if (available !== drive.isLocalAvailable) {
-                    await driveManager.update(drive.id, { isLocalAvailable: available });
-                }
-                results.push({ ...drive, isLocalAvailable: available });
-            }
-            
-            return { success: true, drives: results };
-        } catch (error) {
             return { success: false, error: error.message };
         }
     });
@@ -625,6 +633,71 @@ function setupIPC() {
     ipcMain.handle('generate-qr', async (event, { text }) => {
         const QRCode = require('qrcode');
         return await QRCode.toDataURL(text, { width: 160, margin: 1, color: { dark: '#000000', light: '#ffffff' } });
+    });
+
+    // ========================================================================
+    // App version — used by the one-time reset notice in the renderer to
+    // detect upgrade-across-fix-boundary scenarios.
+    // ========================================================================
+    ipcMain.handle('get-app-version', async () => {
+        return app.getVersion();
+    });
+
+    // ========================================================================
+    // File thumbnail — lazy thumbnail provider for the expanded drive items.
+    //   * Images → return the file:// URL directly so the renderer can <img>
+    //     it. No file read, no encoding, instant.
+    //   * Anything else → app.getFileIcon returns the OS-native icon
+    //     (Mac/Win/Linux). Encoded as data: URL.
+    //   * Failures → return { kind: 'none' } so the renderer keeps the
+    //     emoji fallback.
+    // ========================================================================
+    ipcMain.handle('get-file-thumbnail', async (event, payload) => {
+        const filePath = payload && payload.path;
+        try {
+            if (!filePath) return { kind: 'none', src: null };
+
+            const ext = path.extname(filePath).toLowerCase();
+            const imageExts = new Set([
+                '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.apng'
+            ]);
+
+            if (imageExts.has(ext)) {
+                // Electron renderers can load file:// URLs directly into <img>
+                const url = 'file:///' + filePath.replace(/\\/g, '/');
+                return { kind: 'image', src: url };
+            }
+
+            const icon = await app.getFileIcon(filePath, { size: 'normal' });
+            return { kind: 'icon', src: icon.toDataURL() };
+        } catch (error) {
+            return { kind: 'none', src: null, error: error.message };
+        }
+    });
+
+    // ========================================================================
+    // Legacy data detection — fallback for the one-time "share history was
+    // reset" notice when localStorage has no lastSeenVersion yet (i.e. the
+    // first launch after this build ships). Returns true if any pre-unified
+    // state file is on disk (drives.json or drives-manifest.json), meaning
+    // the user ran an older build that lost data to the purge-on-close bug.
+    // Safe to remove together with the notice once retired.
+    // ========================================================================
+    ipcMain.handle('check-legacy-data-present', async () => {
+        const os = require('os');
+        const path = require('path');
+        const fs = require('fs').promises;
+        const candidates = [
+            path.join(os.homedir(), 'peardrop', 'drives.json'),
+            path.join(os.homedir(), 'peardrop', 'drives-manifest.json')
+        ];
+        for (const file of candidates) {
+            try {
+                await fs.access(file);
+                return { present: true };
+            } catch { /* missing — try next */ }
+        }
+        return { present: false };
     });
 
     // ========================================================================
@@ -691,16 +764,24 @@ function setupIPC() {
         }
         
         const results = [];
-        
-        for (const filePath of filePaths) {
+
+        for (const rawPath of filePaths) {
+            let filePath;
+            try {
+                filePath = normalizeUserPath(rawPath);
+            } catch (err) {
+                console.error('[PearDrop] Skipping invalid path:', rawPath, err.message);
+                continue;
+            }
+
             try {
                 const stats = await fs.stat(filePath);
-                
+
                 if (stats.isDirectory()) {
                     // For folders: calculate total size and enumerate contents
                     const totalSize = await getFolderSize(filePath);
                     const contents = await enumerateFolderContents(filePath);
-                    
+
                     results.push({
                         path: filePath,
                         name: path.basename(filePath),
@@ -709,8 +790,8 @@ function setupIPC() {
                         fileCount: contents.length,
                         contents: contents
                     });
-                    
-                    console.log('[PearDrop] Folder stat:', path.basename(filePath), 
+
+                    console.log('[PearDrop] Folder stat:', path.basename(filePath),
                         `${contents.length} files, ${formatBytes(totalSize)}`);
                 } else {
                     // Regular file
@@ -725,7 +806,7 @@ function setupIPC() {
                 console.error('[PearDrop] Failed to stat:', filePath, error.message);
             }
         }
-        
+
         return results;
     });
 }
@@ -740,13 +821,7 @@ app.whenReady().then(async () => {
         setupIPC();
         createWindow();
         
-        // Initialize Hyperdrive manager
-        await hyperdriveManager.init();
-        
-        // Initialize DriveManager (single source of truth for UI)
-        await driveManager.init();
-        
-        // Forward progress events to renderer
+        // Set up event listeners BEFORE init() so we catch events during drive resume
         hyperdriveManager.on('peer-connected', (data) => {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('peer-connected', data);
@@ -760,6 +835,7 @@ app.whenReady().then(async () => {
         });
         
         hyperdriveManager.on('upload-progress', (data) => {
+            // (no console.log here — ProgressTracker already logs 10% steps)
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('upload-progress', {
                     ...data,
@@ -783,6 +859,50 @@ app.whenReady().then(async () => {
             }
         });
         
+        // Drive ready to download - resumed drive connected and ready to continue
+        hyperdriveManager.on('drive-ready-to-download', (data) => {
+            console.log('[PearDrop] Received drive-ready-to-download event, forwarding to renderer', { driveId: data.driveId });
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('drive-ready-to-download', data);
+            }
+        });
+
+        // Resume-failure signal. The manager emits this from _resumeActiveDrives
+        // when a per-drive hydrate throws. The manifest state is deliberately
+        // NOT flipped to ERRORED (see hyperdrive-manager.js:1420-1424), so the
+        // renderer needs this signal to tell the truth about "tracked but not
+        // actually running" drives. The event goes out as a distinct IPC
+        // channel for runtime/future-proofing; the boot-time snapshot also
+        // travels in the `drives-updated action:'loaded'` payload below.
+        hyperdriveManager.on('drive-resume-failed', (data) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('drive-resume-failed', data);
+            }
+        });
+        
+        // Initialize Hyperdrive manager with clean, accurate manifest (after event listeners are set up)
+        await hyperdriveManager.init();
+        
+        // Notify frontend that drives have been loaded. Include the boot
+        // snapshot of resumeErrors so drives that failed to hydrate can be
+        // rendered as `inactive` on first paint — otherwise their manifest
+        // state (which stays `active`/`seeking` by design) would silently
+        // render them as "Sharing". See status-mapping.js for the merge rule.
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            const drives = hyperdriveManager.getAllDriveEntries();
+            const resumeErrors = {};
+            for (const [id, info] of hyperdriveManager.resumeErrors) {
+                resumeErrors[id] = { error: info.error, at: info.at };
+            }
+            mainWindow.webContents.send('drives-updated', {
+                action: 'loaded',
+                drives: drives,
+                resumeErrors
+            });
+            console.log('[PearDrop] Notified frontend of loaded drives:', drives.length,
+                Object.keys(resumeErrors).length ? `(${Object.keys(resumeErrors).length} resume failure(s))` : '');
+        }
+        
         console.log('[PearDrop] Ready');
         
     } catch (error) {
@@ -794,10 +914,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', async () => {
-    // Stop all shares and cleanup
+    // Disconnect from network only — persistState:false leaves each drive's
+    // manifest state untouched so shares auto-resume + re-announce on next boot
     try {
-        await hyperdriveManager.stopAll({ purge: true });
-        console.log('[PearDrop] Shares cleaned up');
+        await hyperdriveManager.stopAll({ delete: false, persistState: false });
+        console.log('[PearDrop] Disconnected from network');
     } catch (error) {
         console.error('[PearDrop] Cleanup error:', error);
     }
@@ -813,10 +934,27 @@ app.on('activate', () => {
     }
 });
 
-app.on('before-quit', async () => {
-    try {
-        await hyperdriveManager.stopAll({ purge: true });
-    } catch (error) {
-        console.error('[PearDrop] Cleanup error:', error);
-    }
+// Electron does NOT await async before-quit handlers, so a naive `await` here
+// races the process exit and can leave corestores half-closed (lock files,
+// partial writes). Instead: cancel the first quit, run cleanup to completion,
+// then re-issue the quit — guarded so we only intercept once.
+let cleanupDone = false;
+let cleanupInProgress = false;
+app.on('before-quit', (event) => {
+    if (cleanupDone) return; // second pass: let the real quit proceed
+    event.preventDefault();
+    if (cleanupInProgress) return;
+    cleanupInProgress = true;
+    (async () => {
+        try {
+            // persistState:false — shutdown must not demote drives to PAUSED
+            await hyperdriveManager.stopAll({ delete: false, persistState: false });
+            console.log('[PearDrop] Drives closed cleanly on quit');
+        } catch (error) {
+            console.error('[PearDrop] Cleanup error:', error);
+        } finally {
+            cleanupDone = true;
+            app.quit();
+        }
+    })();
 });

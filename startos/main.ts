@@ -19,23 +19,19 @@ export const main = sdk.setupMain(async ({ effects }) => {
   return sdk.Daemons.of(effects).addDaemon('primary', {
     subcontainer: peardropContainer,
     exec: {
-      command: ['node', 'bin/peardrop', 'serve'],
+      command: ['node', 'web-host/dist/server.cjs'],
       env: {
         HOME: '/data',
+        PEARDROP_HOME: '/data/.peardrop',
+        PEARDROP_PORT: '47931',
       },
     },
     ready: {
       display: i18n('P2P Service'),
       fn: () =>
-        new Promise((resolve) => {
-          // PearDrop serve mode just runs - no port to check
-          // Consider it ready after a short delay
-          setTimeout(() => {
-            resolve({
-              result: 'success' as const,
-              message: i18n('PearDrop is running'),
-            })
-          }, 2000)
+        sdk.healthCheck.checkPortListening(effects, 47931, {
+          successMessage: i18n('PearDrop is running'),
+          errorMessage: i18n('PearDrop is not responding'),
         }),
     },
     requires: [],

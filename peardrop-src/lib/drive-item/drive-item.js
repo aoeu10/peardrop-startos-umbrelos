@@ -1,23 +1,24 @@
 /**
  * DriveItem - Standalone drive display component
- * 
  * @module DriveItem
  * @version 1.0.0
- * 
  * EXPORTS:
- *   - DriveItem (class) - Main component class
- * 
+ * DriveItem (class) - Main component class
  * DEPENDENCIES:
- *   - None (zero external dependencies)
- *   - Optional: ProgressBar module for download progress
- * 
+ * None (zero external dependencies)
+ * Optional: ProgressBar module for download progress
+ * EVENTS EMITTED (subscribe via item.on(event, handler)):
+ * 'click' - Single-file item clicked. Payload: drive data.
+ * 'action' - Menu action chosen. Payload: { action, data }.
+ * 'expand' - Expandable item toggled. Payload: { expanded, data }.
+ * 'fileClick' - Child file row in the expanded list clicked.
+ *                   Payload: { file, index, data }.
  * USAGE:
  *   const item = new DriveItem(container, {
  *     data: { title: 'My Drive', size: 1024000, ... },
  *     show: ['title', 'size', 'status', 'progress'],
  *     theme: 'dark'
  *   });
- *   
  *   item.update({ progress: 0.75, speed: 125000 });
  *   item.setVisibility(['title', 'progress', 'peers']);
  *   item.setTheme('light');
@@ -56,12 +57,10 @@
   ];
 
   // Preset visibility configurations
-  // 
   // UPLOAD vs DOWNLOAD display rules:
-  // - DOWNLOADS: Show progress bar, speed, peers
-  // - UPLOADS: Show peers, upload bandwidth — NO progress bar
+  // DOWNLOADS: Show progress bar, speed, peers
+  // UPLOADS: Show peers, upload bandwidth — NO progress bar
   //   (uploader doesn't track what downloader needs, just serves requests)
-  //
   const PRESETS = {
     all: FIELDS.filter(f => f !== 'path' && f !== 'statusIcon'), // path hidden by default
     minimal: ['title', 'status'],
@@ -100,12 +99,6 @@
       animate: null,
       dimItem: true  // Grey out the whole item
     },
-    inactive: { 
-      label: 'Inactive', 
-      color: 'var(--di-status-inactive, #6b7280)',
-      icon: null,  // No icon in compact mode
-      animate: null
-    },
     missing: { 
       label: 'Missing', 
       color: 'var(--di-status-missing, #ef4444)',
@@ -123,13 +116,31 @@
       color: 'var(--di-status-connecting, #3b82f6)',
       icon: '↓',
       animate: 'pulse'
+    },
+    error: {
+      label: 'Error',
+      color: 'var(--di-status-error, #ef4444)',
+      icon: '⚠',
+      animate: null,
+      dimItem: true
+    },
+    // Drive is not currently active (e.g. failed to resume at boot). Neutral
+    // grey + dimmed to say "nothing is happening" without alarming; not
+    // "error" because the failure is usually transient and the manifest
+    // state is untouched. Retry is user-initiated via the Resume menu item.
+    inactive: {
+      label: 'Inactive',
+      color: 'var(--di-status-inactive, #94a3b8)',
+      icon: '◯',
+      animate: null,
+      dimItem: true
     }
   };
 
   // Default menu items (only pause/resume get icons)
   const DEFAULT_MENU_ITEMS = [
     { id: 'pause', label: 'Pause', icon: '⏸', showWhen: (data) => data.status === 'downloading' || data.status === 'sharing' },
-    { id: 'resume', label: 'Resume', icon: '▶', showWhen: (data) => data.status === 'paused' },
+    { id: 'resume', label: 'Resume', icon: '▶', showWhen: (data) => data.status === 'paused' || data.status === 'error' || data.status === 'inactive' },
     { id: 'open', label: 'Open' },
     { id: 'show-files', label: 'Show Files' },
     { id: 'more-info', label: 'More Info' },
@@ -185,77 +196,15 @@
   };
 
   // ==================== UTILITIES ====================
+  // Shared formatting lives in lib/ui-utils.js (window.PearUtils), loaded first
+  // in index.html. These thin forwarders keep call sites unchanged while the
+  // logic stays single-source — see CLAUDE.md "Unified Progress UI".
 
-  function formatBytes(bytes) {
-    if (bytes == null || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  }
-
-  function formatSpeed(bytesPerSec) {
-    if (bytesPerSec == null || bytesPerSec === 0) return '';
-    
-    const k = 1024;
-    
-    // Bytes - rare but handle it
-    if (bytesPerSec < k) {
-      return Math.round(bytesPerSec) + ' B/s';
-    }
-    
-    // KB range
-    const kb = bytesPerSec / k;
-    if (kb < 100) {
-      // Under 100 KB - show 1 decimal
-      return kb.toFixed(1) + ' KB/s';
-    }
-    if (kb < 1000) {
-      // 100-999 KB - no decimal
-      return Math.round(kb) + ' KB/s';
-    }
-    
-    // MB range
-    const mb = bytesPerSec / (k * k);
-    if (mb < 10) {
-      // 1-9.99 MB - 2 decimals
-      return mb.toFixed(2) + ' MB/s';
-    }
-    if (mb < 100) {
-      // 10-99 MB - 1 decimal
-      return mb.toFixed(1) + ' MB/s';
-    }
-    
-    // 100+ MB - no decimal
-    return Math.round(mb) + ' MB/s';
-  }
-
-  function escapeHtml(text) {
-    if (text == null) return '';
-    const div = document.createElement('div');
-    div.textContent = String(text);
-    return div.innerHTML;
-  }
-
-  function truncateMiddle(str, maxLen) {
-    if (!str || str.length <= maxLen) return str;
-    const half = Math.floor((maxLen - 3) / 2);
-    return str.slice(0, half) + '...' + str.slice(-half);
-  }
-
-  function getFileIcon(filename) {
-    if (!filename) return '📄';
-    const ext = filename.split('.').pop()?.toLowerCase();
-    const icons = {
-      jpg: '🖼️', jpeg: '🖼️', png: '🖼️', gif: '🖼️', webp: '🖼️', svg: '🖼️',
-      mp4: '🎬', mov: '🎬', avi: '🎬', mkv: '🎬', webm: '🎬',
-      mp3: '🎵', wav: '🎵', ogg: '🎵', flac: '🎵', m4a: '🎵',
-      pdf: '📕', doc: '📘', docx: '📘', txt: '📄', md: '📝',
-      zip: '📦', rar: '📦', '7z': '📦', tar: '📦', gz: '📦',
-      js: '⚙️', ts: '⚙️', py: '🐍', html: '🌐', css: '🎨', json: '📋'
-    };
-    return icons[ext] || '📄';
-  }
+  const formatBytes = (bytes) => PearUtils.formatBytes(bytes);
+  const formatSpeed = (bytesPerSec) => PearUtils.formatSpeed(bytesPerSec);
+  const escapeHtml = (text) => PearUtils.escapeHtml(text);
+  const truncateMiddle = (str, maxLen) => PearUtils.truncateMiddle(str, maxLen);
+  const getFileIcon = (filename) => PearUtils.getFileIcon(filename);
 
   // ==================== DRIVEITEM CLASS ====================
 
@@ -342,20 +291,6 @@
         this._startTransitionToSharing();
       }
       
-      // Handle upload idle detection
-      if (this._autoTransition && this._data.type === 'upload') {
-        const wasActive = prevPeers > 0 || prevSpeed > 0;
-        const isIdle = this._data.peers === 0 && this._data.speed === 0;
-        
-        if (wasActive && isIdle && this._data.status !== 'inactive') {
-          // Activity just stopped, start idle timeout
-          this._startIdleTimeout();
-        } else if (!isIdle) {
-          // Activity resumed, cancel both idle and cache clear timers
-          this._cancelIdleTimeout();
-          this._cancelClearCacheTimer();
-        }
-      }
       
       return this;
     }
@@ -393,11 +328,11 @@
         this._element.classList.remove('is-transitioning');
       }
       
-      // Transition: download complete → ready to share (upload type, inactive until peers)
+      // Transition: download complete → ready to share (upload type, sharing when peers connect)
       this._data = {
         ...this._data,
         type: 'upload',
-        status: 'inactive', // Will become 'sharing' when peers connect
+        status: 'sharing', // Ready to share (no inactive state needed)
         progress: null,
         speed: 0,
         peers: 0
@@ -406,40 +341,10 @@
       this._render();
       this._emit('transition-complete', { type: 'download-to-share', data: this._data });
       
-      // Start cache clear timer now that we're inactive
+      // Start cache clear timer now that we're sharing
       this._startClearCacheTimer();
     }
 
-    /**
-     * Start idle timeout (for uploads with no activity)
-     */
-    _startIdleTimeout() {
-      if (this._idleTimer) {
-        clearTimeout(this._idleTimer);
-      }
-      
-      this._idleTimer = setTimeout(() => {
-        // Fade upload activity indicators to inactive state
-        if (this._data.type === 'upload' && this._data.peers === 0 && this._data.speed === 0) {
-          this._data.status = 'inactive';
-          this._render();
-          this._emit('idle', { data: this._data });
-          
-          // Start cache clear timer now that we're inactive
-          this._startClearCacheTimer();
-        }
-      }, this._transitionDelay);
-    }
-
-    /**
-     * Cancel idle timeout
-     */
-    _cancelIdleTimeout() {
-      if (this._idleTimer) {
-        clearTimeout(this._idleTimer);
-        this._idleTimer = null;
-      }
-    }
 
     /**
      * Start the cache clear timer (after going inactive)
@@ -451,14 +356,14 @@
       
       this._clearCacheTimer = setTimeout(() => {
         // Emit event for parent app to handle the actual clearing
-        // Parent would call: driveManager.remove(id, { deleteStorage: true, deleteFiles: false })
-        // Or a dedicated: driveManager.clearCache(id)
+        // Parent would call: hyperdriveManager.removeDriveEntry(id, { deleteStorage: true, deleteFiles: false })
+        // Or a dedicated: hyperdriveManager.clearCache(id)
         this._emit('clear-cache', { 
           data: this._data,
           reason: 'inactivity-timeout',
           // Suggested API call:
           api: {
-            method: 'driveManager.remove',
+            method: 'hyperdriveManager.removeDriveEntry',
             args: [this._data.id, { deleteStorage: true, deleteFiles: false }],
             note: 'Clears hyperdrive corestores, keeps manifest reference for rebuild when peers reconnect'
           }
@@ -579,17 +484,19 @@
      * Destroy the component
      */
     destroy() {
+      console.log('[DEBUG] DriveItem.destroy() called for:', this._data?.id || 'unknown');
+      
       if (this._element && this._element.parentNode) {
+        console.log('[DEBUG] DriveItem.destroy() - removing element from DOM');
         this._element.parentNode.removeChild(this._element);
+      } else {
+        console.log('[DEBUG] DriveItem.destroy() - no element or parent to remove');
       }
       if (this._longPressTimer) {
         clearTimeout(this._longPressTimer);
       }
       if (this._transitionTimer) {
         clearTimeout(this._transitionTimer);
-      }
-      if (this._idleTimer) {
-        clearTimeout(this._idleTimer);
       }
       if (this._clearCacheTimer) {
         clearTimeout(this._clearCacheTimer);
@@ -669,10 +576,10 @@
 
     /**
      * Automatically derive status from data state
-     * Priority: explicit paused/missing > inferred from activity > explicit status > inactive
+     * Priority: explicit paused/missing > inferred from activity > explicit status > sharing
      */
     _deriveStatus(data, explicitStatus) {
-      let derived = 'inactive';
+      let derived = 'sharing';
       
       // Paused and missing are explicit states - user has to set them
       if (explicitStatus === 'paused' || explicitStatus === 'missing') {
@@ -699,7 +606,7 @@
         derived = 'sharing';
       }
       // Use explicit status if provided
-      else if (explicitStatus && explicitStatus !== 'inactive') {
+      else if (explicitStatus) {
         derived = explicitStatus;
       }
       
@@ -1205,13 +1112,13 @@
           transition: max-height 0.25s ease, opacity 0.2s ease;
           opacity: 0;
           margin-top: 0;
-          /* Stretch wider, centered within the content column */
-          margin-left: -26px;
-          width: calc(100% + 70px);
+          width: auto;
+          margin-left: -52px;
+          margin-right: -105px;
         }
 
         .drive-item.is-expanded .drive-item-files {
-          max-height: 300px;
+          max-height: 320px;
           opacity: 1;
           margin-top: 6px;
           overflow-y: auto;
@@ -1220,28 +1127,60 @@
         .drive-item-file {
           display: flex;
           align-items: center;
-          gap: 8px;
-          padding: 6px 10px;
-          border-radius: 6px;
-          background: rgba(255, 255, 255, 0.03);
-          margin-bottom: 3px;
+          gap: 10px;
+          padding: 8px 10px;
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.04);
+          margin-bottom: 4px;
+          cursor: pointer;
+          transition: background 0.15s ease, transform 0.08s ease;
+        }
+
+        .drive-item-file:hover {
+          background: rgba(255, 255, 255, 0.09);
+        }
+
+        .drive-item-file:active {
+          transform: scale(0.99);
         }
 
         .drive-item-file:last-child {
           margin-bottom: 0;
         }
 
+        /* Thumb container — fits emoji fallback, file-type icon, or image preview */
+        .drive-item-file-thumb {
+          width: 36px;
+          height: 36px;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 6px;
+          overflow: hidden;
+          background: rgba(255, 255, 255, 0.05);
+          font-size: 18px;
+        }
+
+        .drive-item-file-thumb img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+        }
+
+        /* Legacy class kept for any external CSS that targets it */
         .drive-item-file-icon {
-          font-size: 14px;
+          font-size: 18px;
           flex-shrink: 0;
         }
 
         .drive-item-file-name {
           flex: 1;
           min-width: 0;
-          font-size: 12px;
+          font-size: 13px;
           color: var(--di-text);
-          opacity: 0.8;
+          opacity: 0.85;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -1251,6 +1190,18 @@
           flex-shrink: 0;
           font-size: 11px;
           color: var(--di-text-secondary);
+        }
+
+        .drive-item-file-open {
+          flex-shrink: 0;
+          opacity: 0;
+          transition: opacity 0.15s ease;
+          font-size: 14px;
+          color: var(--di-text-secondary);
+        }
+
+        .drive-item-file:hover .drive-item-file-open {
+          opacity: 0.7;
         }
 
         /* Scrollbar for file list */
@@ -1393,7 +1344,7 @@
       const isDownloading = data.type === 'download' && (data.status === 'downloading' || data.status === 'connecting');
       const isComplete = data.status === 'complete';
       const isActiveUpload = data.type === 'upload' && (data.peers > 0 || data.speed > 0);
-      const isInactive = data.status === 'inactive' || (!isDownloading && !isComplete && !isActiveUpload);
+      const isSharing = data.status === 'sharing' || (!isDownloading && !isComplete && !isActiveUpload);
       
       const percent = data.progress != null ? Math.round(data.progress * 100) : null;
       const speedText = data.speed > 0 ? formatSpeed(data.speed) : '';
@@ -1460,7 +1411,7 @@
           contentParts.push(`<div class="drive-item-meta">${metaParts.join('<span class="drive-item-meta-divider">•</span>')}</div>`);
         }
       }
-      // COMPLETE or INACTIVE (2 rows): Size • files
+      // COMPLETE or INACTIVE (2 rows): Size • files [• peers]
       else {
         const metaParts = [];
         if (show.includes('size') && data.size > 0) {
@@ -1468,6 +1419,16 @@
         }
         if (show.includes('fileCount') && data.fileCount > 0) {
           metaParts.push(`<span class="drive-item-meta-item">${data.fileCount} file${data.fileCount !== 1 ? 's' : ''}</span>`);
+        }
+        // Peer visibility for idle shares: even when nothing is actively
+        // transferring, an upload/share should show whether peers are connected
+        // (or that it's waiting). Previously peers only rendered during an
+        // active upload, so a seeding share looked "dead" in the GUI.
+        if (data.type === 'upload' && show.includes('peers')) {
+          const n = data.peers || 0;
+          metaParts.push(n > 0
+            ? `<span class="drive-item-peers"><span class="drive-item-peers-dot"></span>${n} peer${n !== 1 ? 's' : ''}</span>`
+            : `<span class="drive-item-peers"><span class="drive-item-peers-dot offline"></span>Waiting for peers</span>`);
         }
         if (metaParts.length > 0) {
           contentParts.push(`<div class="drive-item-meta">${metaParts.join('<span class="drive-item-meta-divider">•</span>')}</div>`);
@@ -1484,13 +1445,17 @@
         contentParts.push(`<div class="drive-item-meta"><span class="drive-item-meta-item">by ${truncateMiddle(data.creator, 16)}</span></div>`);
       }
       
-      // Expandable file list (for multi-file items)
+      // Expandable file list (for multi-file items). Each row is a clickable
+      // target — the renderer turns the click into a "fileClick" emission
+      // (handled by the app to open the file). data-file-index is the lookup
+      // key so we don't have to encode paths into HTML attributes.
       if (isExpandable) {
-        const filesHtml = data.files.map(f => `
-          <div class="drive-item-file">
-            <span class="drive-item-file-icon">${getFileIcon(f.name)}</span>
+        const filesHtml = data.files.map((f, idx) => `
+          <div class="drive-item-file" data-file-index="${idx}" role="button" tabindex="0">
+            <span class="drive-item-file-thumb">${getFileIcon(f.name)}</span>
             <span class="drive-item-file-name">${escapeHtml(f.name)}</span>
             <span class="drive-item-file-size">${formatBytes(f.size)}</span>
+            <span class="drive-item-file-open" aria-hidden="true">↗</span>
           </div>
         `).join('');
         contentParts.push(`<div class="drive-item-files">${filesHtml}</div>`);
@@ -1508,7 +1473,7 @@
       // Right side - status badge (expanded text or compact icon)
       if (show.includes('status') && data.status) {
         // Expanded view - full text badge
-        const config = STATUS_CONFIG[data.status] || STATUS_CONFIG.inactive;
+        const config = STATUS_CONFIG[data.status] || STATUS_CONFIG.sharing;
         parts.push(`
           <span class="drive-item-status" style="background: ${config.color}20; color: ${config.color}">
             ${config.label}
@@ -1516,9 +1481,9 @@
         `);
       } else if (show.includes('statusIcon') && data.status) {
         // Compact view - icon badge
-        const config = STATUS_CONFIG[data.status] || STATUS_CONFIG.inactive;
-        
-        // For inactive, don't show any icon (per Guy's spec)
+        const config = STATUS_CONFIG[data.status] || STATUS_CONFIG.sharing;
+
+        // Show icon based on status
         if (config.icon) {
           const animClass = config.animate ? `animate-${config.animate}` : '';
           parts.push(`
@@ -1528,7 +1493,7 @@
           `);
         }
       }
-      
+
       return parts.join('');
     }
 
@@ -1643,7 +1608,19 @@
           return;
         }
 
-        // Expandable items: any click toggles the file list
+        // Clicking a file row inside the expanded list opens that file —
+        // does NOT collapse the parent. Emit and stop.
+        const fileRow = e.target.closest('.drive-item-file');
+        if (fileRow && this._contentArea.contains(fileRow)) {
+          const idx = parseInt(fileRow.dataset.fileIndex, 10);
+          const file = this._data.files && this._data.files[idx];
+          if (file) {
+            this._emit('fileClick', { file, index: idx, data: this._data });
+          }
+          return;
+        }
+
+        // Expandable items: any other click toggles the file list
         if (this._data.files && this._data.files.length > 1) {
           this._toggleExpand();
           return;

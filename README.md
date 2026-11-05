@@ -1,141 +1,110 @@
-<p align="center">
-  <img src="icon.svg" alt="Hello World Logo" width="21%">
-</p>
+# PearDrop on StartOS
 
-# Hello World on StartOS
+PearDrop is a simple peer-to-peer file sharing service packaged for StartOS. It uses Hyperdrive/Hyperswarm to share files directly between peers using `peardrop://` links.
 
-> **Upstream repo:** <https://github.com/Start9Labs/hello-world>
+This package serves the real PearDrop desktop app ([peardrive/peardrop-desktop](https://github.com/peardrive/peardrop-desktop)) in the browser: the unmodified React renderer is built with Vite and served over HTTP, and the P2P engine runs headlessly in the same Node process behind a WebSocket bridge that implements the desktop app's `window.peardrop` API. No Electron runs on the server.
 
-A minimal reference service for StartOS. It displays a simple web page — nothing more. Use [this repository](https://github.com/Start9Labs/hello-world-startos) as a template when packaging a new service for StartOS.
+## Versioning
 
-## Getting Started
+- StartOS package version: `1.1.0:0`
+- Bundled upstream PearDrop desktop version: `0.29.0`
+- Bundled upstream commit: `d29911e2c6a3aad51986f241ed4e5c388c3a7196` (vendored under `upstream-desktop/`)
 
-To learn how to use this template to create your own StartOS service package, see the [Packaging Guide](https://docs.start9.com/packaging).
+The StartOS package version is intentionally separate from the upstream PearDrop application version. Package updates may include StartOS-specific changes such as the web-host bridge, Actions, port/interface changes, packaging fixes, or runtime library fixes even when the bundled PearDrop app version stays the same.
 
----
+## How the web port works
 
-## Table of Contents
+```
+browser ──HTTP──▶ web-host (Node, port 47931)
+   │  static: built React renderer (web-host/dist/renderer)
+   │  POST /web-upload: picked files → /data/.peardrop/web-uploads
+   │  GET /api/status: engine status JSON (used by StartOS Actions)
+   └──WebSocket─▶ invoke(channel) / push(channel)  ==  Electron IPC surface
+                     │
+                     ▼
+              EngineHost → hyperdrive/hyperswarm backend
+```
 
-- [Image and Container Runtime](#image-and-container-runtime)
-- [Volume and Data Layout](#volume-and-data-layout)
-- [Installation and First-Run Flow](#installation-and-first-run-flow)
-- [Configuration Management](#configuration-management)
-- [Network Access and Interfaces](#network-access-and-interfaces)
-- [Actions (StartOS UI)](#actions-startos-ui)
-- [Backups and Restore](#backups-and-restore)
-- [Health Checks](#health-checks)
-- [Dependencies](#dependencies)
-- [Limitations and Differences](#limitations-and-differences)
-- [What Is Unchanged from Upstream](#what-is-unchanged-from-upstream)
-- [Contributing](#contributing)
-- [Quick Reference for AI Consumers](#quick-reference-for-ai-consumers)
-
----
+- `web-host/server.ts` — headless host: reuses the upstream engine, stores and services; implements every IPC channel from `src/shared/ipc.ts` without Electron.
+- `web-host/preload.ts` — browser shim installed as `window.peardrop` before the renderer boots; files picked in the browser are uploaded via `/web-upload` and shared from the server.
+- `upstream-desktop/web-host/build.sh` — builds host bundle (esbuild), browser shim (esbuild), and renderer (Vite).
 
 ## Image and Container Runtime
 
-| Property      | Value                                  |
-| ------------- | -------------------------------------- |
-| Image         | `ghcr.io/start9labs/hello-world`       |
-| Architectures | x86_64, aarch64, riscv64               |
-| Command       | `hello-world`                          |
-
----
+- Image: built from `node:20-bookworm-slim`
+- Architectures: `x86_64`, `aarch64`
+- Command: `node web-host/dist/server.cjs`
+- Runtime libraries: `libatomic1`, `libstdc++6` for native Node addons (`rocksdb-native`, `sodium-native`)
 
 ## Volume and Data Layout
 
-| Volume | Mount Point | Purpose         |
-| ------ | ----------- | --------------- |
-| `main` | `/data`     | Persistent data |
+- Volume: `main`
+- Mount point: `/data`
+- Persistent paths:
+  - `/data/.peardrop/` — engine data root (drives, downloads, preferences, library, logs)
+  - `/data/.peardrop/downloads/` — files received through `peardrop://` links
+  - `/data/.peardrop/web-uploads/` — files picked in the browser before sharing
+  - `/data/.peardrop/logs/` — daily engine logs, last 14 days
 
----
-
-## Installation and First-Run Flow
-
-No special setup. Install and start — the web page is immediately available.
-
----
-
-## Configuration Management
-
-No configurable settings. The service runs with no user-facing configuration.
-
----
+Upgrading from package `1.0.0:7`: the engine migrates the old `/data/peardrop/` layout to `/data/.peardrop/` automatically on first launch.
 
 ## Network Access and Interfaces
 
-| Interface | Port | Protocol | Purpose              |
-| --------- | ---- | -------- | -------------------- |
-| Web UI    | 80   | HTTP     | Hello World web page |
+- Interface: Web UI
+- Internal port: `47931`
+- Protocol: HTTP
+- Purpose: the PearDrop app interface for sharing files, downloading from `peardrop://` links, and managing the drive library
 
-**Access methods:**
+StartOS exports the Web UI through the normal service interface system, so users should open PearDrop from the StartOS service page or through `start-tunnel` rather than connecting directly to container port 47931.
 
-- LAN IP with unique port
-- `<hostname>.local` with unique port
-- Tor `.onion` address
-- Custom domains (if configured)
+## Installation and First-Run Flow
 
----
+No configuration is required. Install, start the service, then open the Web UI.
 
-## Actions (StartOS UI)
+On first start, PearDrop connects to the public Hyperswarm DHT by itself. A custom bootstrap node can be set in **Settings → Network**.
 
-None.
+## StartOS Actions
 
----
-
-## Backups and Restore
-
-**Included in backup:**
-
-- `main` volume
-
-**Restore behavior:** Volume is fully restored before the service starts.
-
----
+- **PearDrop Engine Status** — engine phase, backend, bootstrap nodes, peers, bytes in/out, drive counts.
+- **PearDrop Downloaded Files** — recursive listing of the download folder with sizes and paths.
+- **PearDrop Copy Downloaded Files** — copy downloads to another `/data` folder such as `/data/exported-downloads`.
+- **PearDrop Recent Engine Logs** — last lines of the newest daily engine log.
 
 ## Health Checks
 
-| Check         | Method              | Messages                                                           |
-| ------------- | ------------------- | ------------------------------------------------------------------ |
-| Web Interface | Port listening (80) | Success: "The web interface is ready" / Error: "The web interface is not ready" |
+The primary daemon is healthy when port `47931` is listening.
 
----
+- Success message: `PearDrop is running`
+- Error message: `PearDrop is not responding`
 
 ## Dependencies
 
-None.
+No StartOS service dependencies.
 
----
+## Backups and Restore
 
-## Limitations and Differences
+The `main` volume is included in backups. This preserves PearDrop data, uploads, downloads, and transfer state.
 
-1. **No meaningful functionality** — this is a reference/template package only
+## Limitations and Differences from Upstream
 
----
+- Upstream is an Electron desktop app; here the engine runs headless and the UI is served over HTTP with the exact same renderer code.
+- Files picked in the browser are uploaded to the server (`web-uploads/`) before sharing; folder picking is not supported.
+- Opening/revealing files in the OS file manager is unavailable in the browser; download files to your device through the browser instead.
+- Shares require the service to stay running for recipients to download.
+- Transfers depend on peer availability and DHT connectivity.
 
-## What Is Unchanged from Upstream
-
-The service is identical to upstream. There are no modifications.
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and development workflow.
-
----
-
-## Quick Reference for AI Consumers
+## Quick Reference
 
 ```yaml
-package_id: hello-world
-image: ghcr.io/start9labs/hello-world
-architectures: [x86_64, aarch64, riscv64]
+package_id: peardrop
+package_version: 1.1.0:0
+upstream_peardrop_version: 0.29.0
+upstream: https://github.com/peardrive/peardrop-desktop
+architectures: [x86_64, aarch64]
 volumes:
   main: /data
 ports:
-  ui: 80
+  web_ui: 47931/http
 dependencies: none
-startos_managed_env_vars: none
-actions: none
+entrypoint: node web-host/dist/server.cjs
 ```
