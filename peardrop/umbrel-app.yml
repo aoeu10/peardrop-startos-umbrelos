@@ -1,0 +1,40 @@
+manifestVersion: 1
+id: peardrop
+storage:
+  dataRoot: data
+category: files
+name: PearDrop
+version: "0.29.0"
+tagline: Simple, elegant P2P file sharing
+description: >-
+  PearDrop lets you share files directly with other people using peer-to-peer
+  `peardrop://` links. Drop a file in, send the link, and it goes straight from
+  your Umbrel to theirs — no accounts, no cloud, no size limits.
+
+
+  - Real-time transfer progress with pause, resume, and cancel
+
+  - Favorites, renaming, and a searchable library of your drives
+
+  - Pear (dark) and Paper (light) themes
+
+  - QR codes for share links
+
+
+  Files you receive are stored under the app's data folder, so they persist
+  across restarts and updates and are included in Umbrel backups. Transfers
+  depend on both peers being online and reachable through the public
+  Hyperswarm DHT; keep PearDrop running until recipients finish downloading.
+releaseNotes: ""
+developer: Anjou
+website: https://peardrop.org
+dependencies: []
+repo: https://github.com/peardrive/peardrop-desktop
+support: https://github.com/peardrive/peardrop-desktop/issues
+port: 42731
+gallery: []
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+submitter: aoeu10
+submission: https://github.com/aoeu10/peardrop-startos-umbrelos
