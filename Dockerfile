@@ -21,7 +21,10 @@ RUN apt-get update && \
 WORKDIR /opt/peardrop
 
 # Runtime dependency manifest from upstream (lockfile pins exact versions).
+# The postinstall guard is a no-op under ELECTRON_SKIP_BINARY_DOWNLOAD but
+# npm still executes it, so it must exist.
 COPY upstream-desktop/package.json upstream-desktop/package-lock.json ./
+COPY upstream-desktop/scripts/ensure-electron.cjs ./scripts/
 
 # Host-built bundles: server + browser shim + renderer assets.
 COPY upstream-desktop/web-host/dist ./web-host/dist
