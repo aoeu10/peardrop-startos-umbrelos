@@ -13,5 +13,6 @@ peardrop-src
 upstream-desktop/.git
 upstream-desktop/out
 upstream-desktop/web-host/node_modules
-upstream-desktop/scripts
+upstream-desktop/scripts/*
+!upstream-desktop/scripts/ensure-electron.cjs
 upstream-desktop/test
