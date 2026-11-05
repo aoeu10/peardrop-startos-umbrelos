@@ -4,6 +4,7 @@ storage:
   dataRoot: data
 category: files
 name: PearDrop
+icon: https://raw.githubusercontent.com/aoeu10/peardrop-startos-umbrelos/main/peardrop/icon.png
 version: "0.29.0"
 tagline: Simple, elegant P2P file sharing
 description: >-
