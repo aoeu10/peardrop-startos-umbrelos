@@ -1,18 +1,18 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '1.1.0:0',
+  version: '1.1.1:0',
   releaseNotes: {
     en_US:
-      'Rebuilt on the new PearDrop desktop app (upstream peardrive/peardrop-desktop v0.29.0). The StartOS Web UI is now the real PearDrop React interface — sidebar library layout, Pear/Paper themes, per-drive cards and downloads — served by a headless engine host over the browser. Data moves from /data/peardrop to /data/.peardrop (migrated automatically on first launch). Actions were redesigned: Engine Status, Downloaded Files, Copy Downloads, and Engine Logs replace the old history-based tools.',
+      '"Open file" / "reveal in folder" now work in the web UI: files download through your browser and folders open in a built-in file browser (with download links and folder archives). "Show log file" in Settings downloads the log. Fixes are cosmetic — the P2P engine is unchanged.',
     es_ES:
-      'Reconstruido sobre la nueva aplicación de escritorio PearDrop (peardrive/peardrop-desktop v0.29.0). La Web UI de StartOS ahora es la interfaz React real de PearDrop, servida por un motor sin cabeza en el servidor. Los datos migran de /data/peardrop a /data/.peardrop automáticamente. Actions rediseñadas: estado del motor, archivos descargados, copiar descargas y registros.',
+      '"Abrir archivo" / "mostrar en carpeta" ya funcionan en la Web UI: los archivos se descargan en tu navegador y las carpetas se abren en un explorador de archivos integrado, con enlaces de descarga y archivos comprimidos. "Mostrar registro" en Ajustes descarga el registro. El motor P2P no cambia.',
     de_DE:
-      'Neu aufgebaut auf der neuen PearDrop-Desktop-App (peardrive/peardrop-desktop v0.29.0). Die StartOS-Weboberfläche ist jetzt die echte PearDrop-React-Oberfläche, bereitgestellt von einem kopflosen Engine-Host. Daten wandern automatisch von /data/peardrop nach /data/.peardrop. Neue Actions: Engine-Status, heruntergeladene Dateien, Downloads kopieren, Engine-Logs.',
+      '"Datei öffnen" / "in Ordner anzeigen" funktionieren jetzt in der Weboberfläche: Dateien werden über den Browser heruntergeladen, Ordner öffnen sich in einem integrierten Dateibrowser (mit Download-Links und Ordnerarchiven). "Log-Datei anzeigen" in den Einstellungen lädt das Log herunter. Am P2P-Engine ändert sich nichts.',
     pl_PL:
-      'Przebudowano na nową aplikację PearDrop Desktop (peardrive/peardrop-desktop v0.29.0). Web UI w StartOS to teraz prawdziwy interfejs React PearDrop, serwowany przez silnik działający bez GUI. Dane migrują automatycznie z /data/peardrop do /data/.peardrop. Nowe akcje: status silnika, pobrane pliki, kopiowanie pobrań, logi silnika.',
+      '"Otwórz plik" / "pokaż w folderze" działają teraz w Web UI: pliki pobierają się przez przeglądarkę, a foldery otwierają się we wbudowanej przeglądarce plików (z linkami pobierania i archiwami folderów). "Pokaż plik dziennika" w Ustawieniach pobiera dziennik. Silnik P2P bez zmian.',
     fr_FR:
-      'Reconstruit sur la nouvelle application PearDrop Desktop (peardrive/peardrop-desktop v0.29.0). L’interface web de StartOS est désormais la vraie interface React de PearDrop, servie par un moteur headless. Les données migrent automatiquement de /data/peardrop vers /data/.peardrop. Actions repensées : état du moteur, fichiers téléchargés, copie des téléchargements, journaux.',
+      '« Ouvrir le fichier » / « afficher dans le dossier » fonctionnent désormais dans l’interface web : les fichiers se téléchargent via votre navigateur et les dossiers s’ouvrent dans un explorateur intégré (liens de téléchargement et archives de dossier). « Afficher le fichier journal » dans les réglages télécharge le journal. Le moteur P2P est inchangé.',
   },
   migrations: {
     up: async ({ effects }) => {},

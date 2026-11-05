@@ -216,8 +216,45 @@ rpc.invoke = (async (channel: IpcChannel, ...args: any[]) => {
     const resolved = await resolveWebPaths(args[0] as string[])
     return rawInvoke(channel, ...( [resolved, ...args.slice(1)] as any))
   }
+  // files:open / files:reveal may receive a synthetic webfile: id (share picked
+  // from a DOM File) — resolve it to the uploaded server path first.
+  if ((channel === 'files:open' || channel === 'files:reveal') && typeof args[0] === 'string' && isWebPath(args[0])) {
+    const resolved = await resolveWebPaths([args[0]])
+    return rawInvoke(channel, ...( [resolved[0], ...args.slice(1)] as any))
+  }
   return rawInvoke(channel, ...(args as any))
 }) as typeof rpc.invoke
+
+// ── browser-side "open file / reveal folder" (replaces shell.openPath) ────
+
+/** Download a server file through the browser (same-origin, engine-validated). */
+function triggerBrowserDownload(serverPath: string): void {
+  const a = document.createElement('a')
+  a.href = `/api/files/download?path=${encodeURIComponent(serverPath)}`
+  a.rel = 'noopener'
+  a.style.display = 'none'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
+/** Open a server folder listing in a new tab (defaults to the downloads folder). */
+function openServerFolder(serverPath?: string): void {
+  const q = serverPath ? `?path=${encodeURIComponent(serverPath)}` : ''
+  window.open(`/api/files/browse${q}`, '_blank', 'noopener')
+}
+
+type FileAccessResult = { success: boolean; isDirectory?: boolean; missing?: boolean; error?: string }
+
+/** Server validates; on success download the file or browse the folder. */
+async function openOrReveal(channel: 'files:open' | 'files:reveal', p: string): Promise<FileAccessResult> {
+  const res = (await rpc.invoke(channel, p)) as FileAccessResult
+  if (res.success) {
+    if (res.isDirectory) openServerFolder(p)
+    else triggerBrowserDownload(p)
+  }
+  return res
+}
 
 // ── the API surface (mirrors src/preload/index.ts) ───────────────────────
 
@@ -239,9 +276,13 @@ const api: PeardropApi = {
   files: {
     stat: (paths) => rpc.invoke('files:stat', paths),
     exists: (paths) => rpc.invoke('files:exists', paths),
-    open: () => Promise.resolve({ success: false, error: 'Opening files locally is not available in the web UI' }),
-    reveal: () => Promise.resolve({ success: false, error: 'Revealing files is not available in the web UI' }),
-    openDownloads: () => Promise.resolve({ success: false, error: 'Opening the downloads folder is not available in the web UI' }),
+    open: (p) => openOrReveal('files:open', p),
+    reveal: (p) => openOrReveal('files:reveal', p),
+    openDownloads: async () => {
+      await rpc.invoke('files:open-downloads')
+      openServerFolder() // downloads folder listing in a new tab
+      return { success: true }
+    },
     thumbnail: (p) => rpc.invoke('files:thumbnail', p),
     pick: () =>
       // Must open the input synchronously inside the click that called pick(),
@@ -312,7 +353,12 @@ const api: PeardropApi = {
   },
   logs: {
     path: () => rpc.invoke('logs:path'),
-    reveal: () => rpc.invoke('logs:reveal'),
+    reveal: async () => {
+      // "Show log file" → download the current log via the browser
+      const logPath = (await rpc.invoke('logs:path')) as string
+      triggerBrowserDownload(logPath)
+      return { success: true }
+    },
     tail: (lines) => rpc.invoke('logs:tail', lines),
     write: (entry) => rpc.invoke('logs:write', entry)
   }

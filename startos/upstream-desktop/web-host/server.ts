@@ -13,6 +13,10 @@
  *   POST /web-upload        raw body → <data root>/web-uploads/<ts>-<name>, {path}
  *   GET  /api/ping          {ok:true} — plain liveness probe for StartOS Actions
  *   GET  /api/status        EngineStatus + a cheap transfer snapshot summary
+ *   GET  /api/files/download?path=<abs>   stream a file as a browser download
+ *                            (directories stream as <name>.tar.gz)
+ *   GET  /api/files/browse?path=<dir>     minimal HTML folder listing
+ *                            (defaults to the downloads folder)
  *
  * Environment:
  *   PEARDROP_PORT     HTTP/WS port (default 47931)
@@ -23,6 +27,7 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 import { WebSocketServer, type WebSocket } from 'ws'
 import QRCode from 'qrcode'
 import pkgJson from '../package.json'
@@ -132,9 +137,11 @@ const handlers: { [C in IpcChannel]: Handler } = {
   // local files — the browser uploads them via /web-upload, so they are real paths here
   'files:stat': (p: string[]) => statPaths(p, log),
   'files:exists': (p: string[]) => pathsExist(p),
-  'files:open': () => ({ success: false, error: 'Opening files locally is not available in the web UI' }),
-  'files:reveal': () => ({ success: false, error: 'Revealing files in a folder is not available in the web UI' }),
-  'files:open-downloads': () => ({ success: false, error: 'Opening the downloads folder is not available in the web UI' }),
+  // "Open"/"reveal" download through the browser instead of shell.openPath;
+  // the shim (preload.ts) turns a success result into /api/files/download or /browse.
+  'files:open': async (p: string) => fileAccessResult(p),
+  'files:reveal': async (p: string) => fileAccessResult(p),
+  'files:open-downloads': () => ({ success: true }), // shim opens /api/files/browse for the downloads folder
   'files:thumbnail': (p: string) => thumbnailFor(p),
   'files:pick': () => [], // handled browser-side by the shim (native <input type=file> + upload)
 
@@ -174,7 +181,7 @@ const handlers: { [C in IpcChannel]: Handler } = {
 
   // logs
   'logs:path': () => logs.currentFile(),
-  'logs:reveal': () => ({ success: false, error: 'Revealing files is not available in the web UI' }),
+  'logs:reveal': () => ({ success: true }), // shim downloads the log file via /api/files/download
   'logs:tail': (lines?: number) => {
     try {
       return { success: true, text: logs.tail(Math.min(Math.max(lines ?? 300, 1), 5000)), path: logs.currentFile() }
@@ -372,6 +379,129 @@ async function handleApiStatus(res: http.ServerResponse): Promise<void> {
   res.end(JSON.stringify({ ...status, transfers }))
 }
 
+// ── file download & folder browsing (web replacement for shell.openPath) ──
+//
+// Everything the UI could "open" lives under the engine's data roots: the data
+// root itself (downloads, receive queue payloads), the downloads folder, and
+// the /web-upload staging dir. Targets are realpath'd so a symlink inside the
+// data folder cannot smuggle a path outside.
+
+const DOWNLOAD_ROOTS = (): string[] => [paths.root, paths.downloadsDir, webUploadsDir]
+
+async function resolveWithinRoots(rawPath: string): Promise<string | null> {
+  if (!path.isAbsolute(rawPath)) return null
+  let target = path.resolve(rawPath)
+  try {
+    target = await fs.promises.realpath(target)
+  } catch {
+    return null
+  }
+  const roots = await Promise.all(DOWNLOAD_ROOTS().map((r) => fs.promises.realpath(r).catch(() => r)))
+  const inside = roots.some((root) => target === root || target.startsWith(root + path.sep))
+  return inside ? target : null
+}
+
+// Shared result shape for files:open / files:reveal. `isDirectory` lets the
+// shim pick browse-vs-download without a second round trip.
+async function fileAccessResult(rawPath: string): Promise<{ success: boolean; isDirectory?: boolean; missing?: boolean; error?: string }> {
+  try {
+    const target = path.resolve(rawPath)
+    const st = await fs.promises.stat(target)
+    if (!(await resolveWithinRoots(rawPath))) {
+      return { success: false, error: 'File access is limited to the PearDrop data folder in the web UI' }
+    }
+    return { success: true, isDirectory: st.isDirectory() }
+  } catch {
+    return { success: false, missing: true, error: 'File not found' }
+  }
+}
+
+function contentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_')
+  const utf8 = encodeURIComponent(filename).replace(/['()]/g, escape)
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`
+}
+
+async function handleFileDownload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  const target = await resolveWithinRoots(url.searchParams.get('path') ?? '')
+  if (!target) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('Not Found')
+    return
+  }
+  const name = path.basename(target)
+  const st = await fs.promises.stat(target)
+  if (st.isDirectory()) {
+    // Folder "open" → stream the whole folder as a tar.gz (tar exists in the runtime image).
+    res.writeHead(200, {
+      'Content-Type': 'application/gzip',
+      'Content-Disposition': contentDisposition(`${name}.tar.gz`)
+    })
+    const child = spawn('tar', ['-czf', '-', '-C', path.dirname(target), path.basename(target)], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    child.stderr.on('data', (d: Buffer) => log.warn(`tar: ${d.toString().trim()}`))
+    child.on('error', (err: Error) => {
+      log.error('tar failed', err)
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' })
+      res.end('Internal Server Error')
+    })
+    child.stdout.pipe(res)
+    return
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': st.size,
+    'Content-Disposition': contentDisposition(name)
+  })
+  fs.createReadStream(target).pipe(res)
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+async function handleFolderBrowse(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  const requested = url.searchParams.get('path') || paths.downloadsDir
+  const dir = await resolveWithinRoots(requested)
+  if (!dir) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' })
+    res.end('Not Found')
+    return
+  }
+  const st = await fs.promises.stat(dir)
+  if (!st.isDirectory()) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' })
+    res.end('Not a directory')
+    return
+  }
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+  entries.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+  const parent = path.dirname(dir)
+  const parentLink =
+    parent === dir || !(await resolveWithinRoots(parent))
+      ? ''
+      : `<li><a href="/api/files/browse?path=${encodeURIComponent(parent)}">../ (parent folder)</a></li>`
+  const rows = entries
+    .map((e) => {
+      const full = path.join(dir, e.name)
+      const label = escapeHtml(e.name) + (e.isDirectory() ? '/' : '')
+      const href = e.isDirectory()
+        ? `/api/files/browse?path=${encodeURIComponent(full)}`
+        : `/api/files/download?path=${encodeURIComponent(full)}`
+      const size = e.isDirectory() ? '' : 'download'
+      return `<li><a href="${href}">${label}</a> ${size}</li>`
+    })
+    .join('\n')
+  const html = `<!doctype html><meta charset="utf-8"><title>PearDrop — ${escapeHtml(path.basename(dir))}</title>
+<h1>${escapeHtml(dir)}</h1><ul>${parentLink}${rows}</ul>
+<style>body{font-family:system-ui,sans-serif;margin:2rem;background:#141414;color:#eee}a{color:#7ab8f5;text-decoration:none}a:hover{text-decoration:underline}li{margin:.35rem 0}</style>`
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+  res.end(html)
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -388,6 +518,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && pathname === '/api/status') {
       await handleApiStatus(res)
+      return
+    }
+    if (req.method === 'GET' && pathname === '/api/files/download') {
+      await handleFileDownload(req, res)
+      return
+    }
+    if (req.method === 'GET' && pathname === '/api/files/browse') {
+      await handleFolderBrowse(req, res)
       return
     }
 

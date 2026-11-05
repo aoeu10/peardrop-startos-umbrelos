@@ -7,7 +7,7 @@ services:
       APP_PORT: 47931
 
   web:
-    image: ghcr.io/aoeu10/peardrop:0.29.0@sha256:a9b9764a6d740ec711d32d26dc86ef3348904b3eef390d50caac4ae64037dbaf
+    image: ghcr.io/aoeu10/peardrop:0.29.1@sha256:958a0f639a0db941200c9f71c6534ba09cb4c076bc647444b5ece9670d610b3a
     user: "1000:1000"
     init: true
     restart: on-failure
