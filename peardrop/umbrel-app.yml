@@ -32,7 +32,7 @@ website: https://peardrop.org
 dependencies: []
 repo: https://github.com/peardrive/peardrop-desktop
 support: https://github.com/peardrive/peardrop-desktop/issues
-port: 42731
+port: 20402
 gallery: []
 path: ""
 defaultUsername: ""
