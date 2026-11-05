@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PearDrop - P2P File Sharing</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0a0f;
+  --surface: #12121a;
+  --surface2: #1a1a25;
+  --border: #2a2a3a;
+  --text: #e0e0e8;
+  --text2: #8888a0;
+  --accent: #6c5ce7;
+  --accent2: #a29bfe;
+  --success: #00b894;
+  --danger: #e17055;
+  --warning: #fdcb6e;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+header h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+header .logo {
+  font-size: 24px;
+}
+
+header .tag {
+  background: var(--accent);
+  color: white;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text2);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: white;
+}
+
+.tab:hover:not(.active) {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.panel { display: none; }
+.panel.active { display: block; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.card h2 {
+  font-size: 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 40px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--accent);
+  background: rgba(108, 92, 231, 0.05);
+}
+
+.dropzone p {
+  color: var(--text2);
+  margin-bottom: 8px;
+}
+
+.dropzone .hint {
+  font-size: 13px;
+  color: var(--text2);
+}
+
+input[type="text"], input[type="url"] {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+input:focus {
+  border-color: var(--accent);
+}
+
+.btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover { background: var(--accent2); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-danger {
+  background: var(--danger);
+  color: white;
+}
+
+.btn-danger:hover { opacity: 0.85; }
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.share-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 10px;
+}
+
+.share-item .link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.share-item .link {
+  flex: 1;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  background: var(--bg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent2);
+}
+
+.share-item .meta {
+  font-size: 13px;
+  color: var(--text2);
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text2);
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--text2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text2);
+}
+
+.empty .icon { font-size: 40px; margin-bottom: 12px; }
+.empty p { font-size: 14px; }
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--success);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  transform: translateY(100px);
+  opacity: 0;
+  transition: all 0.3s;
+  z-index: 100;
+}
+
+.toast.show {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.toast.error {
+  background: var(--danger);
+}
+
+.file-list {
+  margin-top: 12px;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+
+.progress-bar {
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">🍐</span>
+  <h1>PearDrop</h1>
+  <span class="tag">P2P</span>
+</header>
+
+<div class="container">
+  <div class="tabs">
+    <button class="tab active" data-tab="share">📤 Share Files</button>
+    <button class="tab" data-tab="download">📥 Download</button>
+    <button class="tab" data-tab="active">🔄 Active Shares</button>
+  </div>
+
+  <!-- Share Panel -->
+  <div id="share" class="panel active">
+    <div class="card">
+      <h2>📤 Share Files</h2>
+      <div class="dropzone" id="dropzone">
+        <p><strong>Drop files here</strong> or click to browse</p>
+        <p class="hint">Files are shared directly between devices — nothing touches a server</p>
+        <input type="file" id="fileInput" multiple style="display:none">
+      </div>
+      <div class="file-list" id="fileList"></div>
+      <div style="margin-top: 16px; display: flex; gap: 8px;">
+        <button class="btn btn-primary" id="shareBtn" disabled>Start Sharing</button>
+        <button class="btn btn-danger btn-sm" id="clearBtn" style="display:none">Clear</button>
+      </div>
+    </div>
+    <div class="card" id="shareResult" style="display:none">
+      <h2>✅ Sharing!</h2>
+      <p style="font-size:13px; color:var(--text2); margin-bottom:12px">
+        Send this link to the recipient. Files transfer directly between devices.
+      </p>
+      <div class="share-item" style="margin-bottom:0">
+        <div class="link-row">
+          <div class="link" id="shareLink"></div>
+          <button class="btn btn-primary btn-sm" onclick="copyLink()">📋 Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download Panel -->
+  <div class="panel" id="download">
+    <div class="card">
+      <h2>📥 Download Files</h2>
+      <p style="font-size:13px; color:var(--text2); margin-bottom:12px">
+        Paste a PearDrop link from someone else to download their shared files.
+      </p>
+      <input type="text" id="downloadLink" placeholder="peardrop://abc123...">
+      <div style="margin-top:12px">
+        <button class="btn btn-primary" id="downloadBtn">Download</button>
+      </div>
+    </div>
+    <div class="card" id="downloadProgress" style="display:none">
+      <h2><span class="spinner"></span> Connecting...</h2>
+      <p id="downloadStatus" style="font-size:13px; color:var(--text2); margin-top:8px"></p>
+    </div>
+  </div>
+
+  <!-- Active Shares Panel -->
+  <div class="panel" id="active">
+    <div class="card">
+      <h2>🔄 Active Shares</h2>
+      <div id="activeList"></div>
+    </div>
+    <div class="status-bar" id="statusBar">
+      <span id="stats">Loading...</span>
+      <button class="btn btn-danger btn-sm" id="stopAllBtn" style="display:none">Stop All</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let selectedFiles = [];
+
+// Tab switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById(tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'active') loadActive();
+  });
+});
+
+// Toast notifications
+function showToast(msg, error = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast' + (error ? ' error' : '');
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// === SHARE ===
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+
+dropzone.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(files) {
+  selectedFiles = [...files];
+  const list = document.getElementById('fileList');
+  list.innerHTML = '';
+  
+  let totalSize = 0;
+  for (const f of files) {
+    totalSize += f.size;
+    list.innerHTML += `<div class="file-item">📄 ${f.name} <span style="color:var(--text2)">(${formatSize(f.size)})</span></div>`;
+  }
+  
+  document.getElementById('shareBtn').disabled = false;
+  document.getElementById('clearBtn').style.display = '';
+  dropzone.querySelector('p').innerHTML = `<strong>${files.length} file${files.length > 1 ? 's' : ''} selected</strong> (${formatSize(totalSize)})`;
+}
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+  selectedFiles = [];
+  document.getElementById('fileList').innerHTML = '';
+  document.getElementById('shareBtn').disabled = true;
+  document.getElementById('clearBtn').style.display = 'none';
+  dropzone.querySelector('p').innerHTML = '<strong>Drop files here</strong> or click to browse';
+});
+
+document.getElementById('shareBtn').addEventListener('click', async () => {
+  if (selectedFiles.length === 0) return;
+  
+  const btn = document.getElementById('shareBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Sharing...';
+  
+  const form = new FormData();
+  for (const f of selectedFiles) form.append('files', f);
+  
+  try {
+    const r = await fetch('/api/share', { method: 'POST', body: form });
+    const data = await r.json();
+    
+    if (data.success) {
+      document.getElementById('shareLink').textContent = data.shareLink;
+      document.getElementById('shareResult').style.display = '';
+      showToast('Files shared successfully!');
+    } else {
+      showToast(data.error || 'Share failed', true);
+    }
+  } catch (err) {
+    showToast('Network error: ' + err.message, true);
+  }
+  
+  btn.disabled = false;
+  btn.innerHTML = 'Start Sharing';
+});
+
+function copyLink() {
+  const link = document.getElementById('shareLink').textContent;
+  navigator.clipboard.writeText(link).then(() => showToast('Link copied!'));
+}
+
+// === DOWNLOAD ===
+document.getElementById('downloadBtn').addEventListener('click', async () => {
+  const link = document.getElementById('downloadLink').value.trim();
+  if (!link) { showToast('Enter a share link', true); return; }
+  
+  const btn = document.getElementById('downloadBtn');
+  const prog = document.getElementById('downloadProgress');
+  const status = document.getElementById('downloadStatus');
+  
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Downloading...';
+  prog.style.display = '';
+  status.textContent = 'Connecting to peer...';
+  
+  try {
+    const r = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ link })
+    });
+    const data = await r.json();
+    
+    if (data.success) {
+      const downloaded = data.files || [];
+      const missing = data.missingFiles || [];
+      const downloadedLines = downloaded.length
+        ? downloaded.map(f => `📄 ${f.name} (${formatSize(f.size)})`).join('<br>')
+        : 'No files were written to disk.';
+      const missingLines = missing.length
+        ? '<br><br>Missing/unavailable:<br>' + missing.map(f => `⚠️ ${f.name} (${formatSize(f.size || 0)}) — ${f.reason || 'not available from peer'}`).join('<br>')
+        : '';
+      status.innerHTML = data.partial
+        ? `⚠️ Partial download: got ${downloaded.length} of ${data.expectedCount || downloaded.length + missing.length} file(s).<br>${downloadedLines}${missingLines}`
+        : `✅ Downloaded ${downloaded.length} file${downloaded.length > 1 ? 's' : ''} successfully!<br>${downloadedLines}`;
+      showToast(data.partial ? 'Partial download — some files unavailable' : 'Download complete!', !!data.partial);
+    } else {
+      status.textContent = '❌ ' + (data.error || 'Download failed');
+      showToast(data.error || 'Download failed', true);
+    }
+  } catch (err) {
+    status.textContent = '❌ Network error: ' + err.message;
+    showToast('Download failed', true);
+  }
+  
+  btn.disabled = false;
+  btn.innerHTML = 'Download';
+});
+
+// === ACTIVE SHARES ===
+async function loadActive() {
+  const list = document.getElementById('activeList');
+  
+  try {
+    const r = await fetch('/api/status');
+    const data = await r.json();
+    
+    if (!data.success) { list.innerHTML = '<div class="empty"><p>Failed to load</p></div>'; return; }
+    
+    const active = data.active || [];
+    
+    if (active.length === 0) {
+      list.innerHTML = '<div class="empty"><div class="icon">📭</div><p>No active shares</p></div>';
+      document.getElementById('stopAllBtn').style.display = 'none';
+    } else {
+      list.innerHTML = active.map(s => `
+        <div class="share-item">
+          <div class="link-row">
+            <div class="link">${s.shareLink}</div>
+            <button class="btn btn-primary btn-sm" onclick="navigator.clipboard.writeText('${s.shareLink}').then(()=>showToast('Copied!'))">📋</button>
+            <button class="btn btn-danger btn-sm" onclick="stopShare('${s.driveId}')">✕</button>
+          </div>
+          <div class="meta">
+            <span>📁 ${s.files?.length || '?'} files</span>
+            ${s.totalBytes ? `<span>💾 ${formatSize(s.totalBytes)}</span>` : ''}
+            ${s.isReceiving ? '<span style="color:var(--warning)">📥 Receiving</span>' : '<span style="color:var(--success)">📤 Sharing</span>'}
+          </div>
+        </div>
+      `).join('');
+      document.getElementById('stopAllBtn').style.display = '';
+    }
+    
+    document.getElementById('stats').textContent = 
+      `Shares: ${active.length} | Total created: ${data.stats?.totalCreated || 0} | Bytes shared: ${formatSize(data.stats?.totalBytesShared || 0)}`;
+  } catch {
+    list.innerHTML = '<div class="empty"><p>Failed to connect to server</p></div>';
+  }
+}
+
+async function stopShare(id) {
+  await fetch(`/api/shares/${id}`, { method: 'DELETE' });
+  loadActive();
+  showToast('Share stopped');
+}
+
+document.getElementById('stopAllBtn').addEventListener('click', async () => {
+  await fetch('/api/shares', { method: 'DELETE' });
+  loadActive();
+  showToast('All shares stopped');
+});
+
+// Auto-refresh active tab
+setInterval(() => {
+  if (document.querySelector('#active.panel.active')) loadActive();
+}, 5000);
+
+// Utils
+function formatSize(bytes) {
+  if (!bytes) return '0 B';
+  const k = 1024;
+  const s = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + s[i];
+}
+</script>
+</body>
+</html>

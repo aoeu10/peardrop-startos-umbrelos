@@ -1,0 +1,18 @@
+node_modules
+**/node_modules
+javascript
+*.s9pk
+.git
+**/.git
+startos
+assets
+# Legacy v0.25 web app — no longer part of the image build.
+peardrop-src
+# Build tooling and VCS metadata of the upstream clone; only
+# package.json, package-lock.json and web-host/dist are COPYied.
+upstream-desktop/.git
+upstream-desktop/out
+upstream-desktop/web-host/node_modules
+upstream-desktop/scripts/*
+!upstream-desktop/scripts/ensure-electron.cjs
+upstream-desktop/test
